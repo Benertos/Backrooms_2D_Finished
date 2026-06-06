@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Backrooms FULL HORROR</title>
+<style>
+  body { margin:0; overflow:hidden; background:#000; }
+  canvas { display:block; }
+
+  /* 📺 STATIC OVERLAY */
+  #noise {
+    position:fixed;
+    inset:0;
+    pointer-events:none;
+    background-image:url("https://upload.wikimedia.org/wikipedia/commons/7/76/Noise_Texture.png");
+    opacity:0.05;
+    mix-blend-mode:screen;
+    animation: flicker 0.2s infinite;
+  }
+
+  @keyframes flicker {
+    0% {opacity:0.03;}
+    50% {opacity:0.08;}
+    100% {opacity:0.02;}
+  }
+
+  #start{
+    position:fixed;
+    inset:0;
+    background:#000;
+    color:#fff;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-family:Arial;
+    font-size:28px;
+    cursor:pointer;
+    z-index:10;
+  }
+</style>
+</head>
+<body>
+
+<div id="start">CLICK TO START</div>
+<div id="noise"></div>
+<canvas id="game"></canvas>
+
+<script>
+const canvas=document.getElementById("game");
+const ctx=canvas.getContext("2d");
+
+canvas.width=innerWidth;
+canvas.height=innerHeight;
+
+// ================= AUDIO =================
+let audioCtx, osc, gain, audioReady=false;
+
+function initAudio(){
+  audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+
+  osc=audioCtx.createOscillator();
+  gain=audioCtx.createGain();
+
+  osc.type="sawtooth";
+  osc.frequency.value=45;
+  gain.gain.value=0;
+
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+
+  osc.start();
+}
+
+function startAudio(){
+  if(audioReady) return;
+  initAudio();
+  audioCtx.resume();
+  audioReady=true;
+}
+
+// ================= GAME =================
+const CHUNK=600;
+let WALLS=14;
+
+const keys={};
+addEventListener("keydown",e=>keys[e.key]=true);
+addEventListener("keyup",e=>keys[e.key]=false);
+
+const chunks=new Map();
+const enemies=[];
+
+let camX=0,camY=0;
+let shake=0;
+
+const player={
+  x:0,y:0,size:20,speed:4,alive:true,win:false
+};
+
+const exit={x:8000,y:8000,size:60};
+
+let restarting=false;
+
+// ================= START =================
+document.getElementById("start").onclick=()=>{
+  startAudio();
+  document.getElementById("start").style.display="none";
+  loop();
+};
+
+// ================= RESET =================
+function resetGame(){
+  player.x=0;
+  player.y=0;
+  player.win=false;
+  player.alive=true;
+
+  enemies.length=0;
+  chunks.clear();
+
+  restarting=false;
+}
+
+// ================= CHUNKS =================
+function key(cx,cy){return cx+","+cy;}
+
+function get(cx,cy){
+  const k=key(cx,cy);
+  if(!chunks.has(k)) chunks.set(k,gen(cx,cy));
+  return chunks.get(k);
+}
+
+function gen(cx,cy){
+  const w=[];
+  const bx=cx*CHUNK;
+  const by=cy*CHUNK;
+
+  for(let i=0;i<WALLS;i++){
+    w.push({
+      x:bx+Math.random()*CHUNK,
+      y:by+Math.random()*CHUNK,
+      w:80+Math.random()*160,
+      h:20+Math.random()*120
+    });
+  }
+  return {w};
+}
+
+// ================= COLLISION =================
+function hit(a,b){
+  return a.x<b.x+b.w && a.x+a.w>b.x && a.y<b.y+b.h && a.y+a.h>b.y;
+}
+
+function wall(r){
+  const cx=Math.floor(r.x/CHUNK);
+  const cy=Math.floor(r.y/CHUNK);
+
+  for(let x=-1;x<=1;x++){
+    for(let y=-1;y<=1;y++){
+      const c=get(cx+x,cy+y);
+      for(const ww of c.w){
+        if(hit(r,ww)) return true;
+      }
+    }
+  }
+  return false;
+}
+
+// ================= MOVE =================
+function move(o,dx,dy,s){
+  o.x+=dx;
+  if(wall({x:o.x,y:o.y,w:s,h:s})) o.x-=dx;
+
+  o.y+=dy;
+  if(wall({x:o.x,y:o.y,w:s,h:s})) o.y-=dy;
+}
+
+// ================= ENEMY =================
+function spawn(){
+  const a=Math.random()*Math.PI*2;
+  const d=500+Math.random()*300;
+
+  enemies.push({
+    x:player.x+Math.cos(a)*d,
+    y:player.y+Math.sin(a)*d,
+    s:18,sp:1.5
+  });
+}
+setInterval(()=>spawn(),1000);
+
+// ================= AI =================
+function moveE(e){
+  const dx=player.x-e.x;
+  const dy=player.y-e.y;
+  const d=Math.max(1,Math.hypot(dx,dy));
+
+  let vx=dx/d;
+  let vy=dy/d;
+
+  const test={x:e.x+vx*30,y:e.y+vy*30,w:e.s,h:e.s};
+
+  if(wall(test)){
+    const a=Math.random()*Math.PI*2;
+    vx=Math.cos(a);
+    vy=Math.sin(a);
+  }
+
+  move(e,vx*e.sp,vy*e.sp,e.s);
+}
+
+// ================= UPDATE =================
+function update(){
+  if(player.win || restarting) return;
+
+  let dx=0,dy=0;
+
+  if(keys["w"])dy-=player.speed;
+  if(keys["s"])dy+=player.speed;
+  if(keys["a"])dx-=player.speed;
+  if(keys["d"])dx+=player.speed;
+
+  move(player,dx,dy,player.size);
+
+  for(const e of enemies){
+    moveE(e);
+
+    const dist=Math.hypot(player.x-e.x,player.y-e.y);
+
+    if(dist<18 && !restarting){
+      restarting=true;
+      shake=20; // 💀 screen shake on death
+      setTimeout(resetGame,60);
+    }
+
+    if(dist<200) shake=5;
+  }
+
+  const dExit=Math.hypot(player.x-exit.x,player.y-exit.y);
+  if(dExit<exit.size) player.win=true;
+
+  camX=player.x-canvas.width/2;
+  camY=player.y-canvas.height/2;
+
+  if(audioReady){
+    let min=9999;
+    for(const e of enemies){
+      const d=Math.hypot(player.x-e.x,player.y-e.y);
+      if(d<min) min=d;
+    }
+    gain.gain.value=Math.max(0,1-min/600)*0.7;
+  }
+
+  if(shake>0) shake*=0.9;
+}
+
+// ================= FLASHLIGHT =================
+function light(){
+  const g=ctx.createRadialGradient(
+    canvas.width/2,
+    canvas.height/2,
+    10,
+    canvas.width/2,
+    canvas.height/2,
+    340
+  );
+
+  g.addColorStop(0,"rgba(255,255,200,0.25)");
+  g.addColorStop(1,"rgba(0,0,0,0.98)");
+
+  ctx.fillStyle=g;
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+}
+
+// ================= DRAW =================
+function draw(){
+  ctx.fillStyle="#000";
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  ctx.save();
+
+  // 🫨 SCREEN SHAKE
+  ctx.translate(
+    -camX + (Math.random()-0.5)*shake,
+    -camY + (Math.random()-0.5)*shake
+  );
+
+  const cx=Math.floor(player.x/CHUNK);
+  const cy=Math.floor(player.y/CHUNK);
+
+  for(let x=-2;x<=2;x++){
+    for(let y=-2;y<=2;y++){
+      const c=get(cx+x,cy+y);
+
+      for(const ww of c.w){
+        ctx.fillStyle="#d6c35a";
+        ctx.fillRect(ww.x,ww.y,ww.w,ww.h);
+      }
+    }
+  }
+
+  ctx.fillStyle="cyan";
+  ctx.fillRect(exit.x,exit.y,exit.size,exit.size);
+
+  ctx.fillStyle="lime";
+  ctx.fillRect(player.x,player.y,player.size,player.size);
+
+  for(const e of enemies){
+    ctx.fillStyle="red";
+    ctx.fillRect(e.x,e.y,e.s,e.s);
+  }
+
+  ctx.restore();
+
+  light();
+
+  ctx.fillStyle="#fff";
+  ctx.fillText("FIND EXIT",20,30);
+
+  if(player.win){
+    ctx.font="60px Arial";
+    ctx.fillText("YOU ESCAPED",canvas.width/2-200,canvas.height/2);
+  }
+
+  if(restarting){
+    ctx.fillText("DEATH...",20,60);
+  }
+}
+
+// ================= LOOP =================
+function loop(){
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+</script>
+
+</body>
+</html>
